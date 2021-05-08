@@ -10,6 +10,7 @@ from typing import List, Optional
 import cachetools.func
 import pandas as pd
 import requests
+from requests.models import HTTPError
 from retry import retry
 import pgeocode
 import random
@@ -202,3 +203,4 @@ if __name__ == "__main__":
             print("No Slots available")
     else:
         print("API Request Failed")
+        raise Exception("API Request Failed")
