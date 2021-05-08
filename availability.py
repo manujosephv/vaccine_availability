@@ -151,5 +151,7 @@ if __name__ == "__main__":
     pincode = 695024
     show_empty_slots = False
     availability_data = get_availability(dist_ids, min_age_limit, pincode, show_empty_slots)
-    print(availability_data)
+    # print(availability_data)
     send_email(availability_data, min_age_limit, send_empty_email = False)
+    if not show_empty_slots and len(availability_data)==0:
+        print("No Slots available")
