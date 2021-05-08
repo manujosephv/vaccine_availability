@@ -18,11 +18,7 @@ headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_1) AppleW
 
 headers = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9", 
-    "Accept-Encoding": "gzip, deflate", 
     "Accept-Language": "en-GB,en-US;q=0.9,en;q=0.8", 
-    "Dnt": "1", 
-    "Host": "httpbin.org", 
-    "Upgrade-Insecure-Requests": "1", 
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/83.0.4103.97 Safari/537.36", 
   }
 
@@ -69,7 +65,10 @@ def get_all_district_ids():
 @retry(KeyError, tries=5, delay=2)
 def get_data(URL):
     response = requests.get(URL, timeout=3, headers=get_random_header())
-    data = json.loads(response.text)['centers']
+    if response.status_code == 403:
+        return None
+    else:
+        data = json.loads(response.text)['centers']
     return data
 
 
@@ -80,44 +79,47 @@ def get_availability(district_ids: List[int], min_age_limit: int, pincode_search
         print(f"checking for INP_DATE:{INP_DATE} & DIST_ID:{district_id}")
         URL = "https://cdn-api.co-vin.in/api/v2/appointment/sessions/public/calendarByDistrict?district_id={}&date={}".format(district_id, INP_DATE)
         data = get_data(URL)
-        df = pd.DataFrame(data)
-        if len(df):
-            df = df.explode("sessions")
-            df['min_age_limit'] = df.sessions.apply(lambda x: x['min_age_limit'])
-            df['available_capacity'] = df.sessions.apply(lambda x: x['available_capacity']).astype(int)
-            df['date'] = df.sessions.apply(lambda x: x['date'])
-            df['vaccine'] = df.sessions.apply(lambda x: x['vaccine'])
-            df = df[["date", "min_age_limit", "available_capacity", "pincode", "name", "state_name", "district_name", "block_name", "fee_type", "vaccine"]]
-            all_date_df.append(df)
-            # if all_date_df is not None:
-            #     all_date_df = pd.concat([all_date_df, df])
-            # else:
-            #     all_date_df = df
-    if len(all_date_df)>0:
-        all_date_df = pd.concat(all_date_df)
-        all_date_df = all_date_df.drop(["block_name"], axis=1)
-        if pincode_search is not None and pincode_search!="":
-            dist = pgeocode.GeoDistance('in')
-            all_date_df['distance'] = df.pincode.apply(lambda x: dist.query_postal_code(str(pincode_search), x)).fillna(9999).round(0)
-            all_date_df.sort_values(["distance", "available_capacity"], ascending=[True, False], inplace=True)
-        else:
-            all_date_df.sort_values(["available_capacity"], ascending=[False], inplace=True)
-        all_date_df = all_date_df[all_date_df.min_age_limit <= min_age_limit]
-        if not show_empty_slots:
-            all_date_df = all_date_df[all_date_df.available_capacity > 0]
-        # Human Readable Column names
-        all_date_df.rename(columns={
-            "name": "Center",
-            "district_name": "District",
-            "fee_type": "Free/Paid",
-            "min_age_limit": "Min Eligible Age",
-            "pincode": "Pin Code",
-            "distance": "Distance from you(km)",
-            "available_capacity": "Available Slots"
-        }, inplace=True)
+        if data is not None:
+            df = pd.DataFrame(data)
+            if len(df):
+                df = df.explode("sessions")
+                df['min_age_limit'] = df.sessions.apply(lambda x: x['min_age_limit'])
+                df['available_capacity'] = df.sessions.apply(lambda x: x['available_capacity']).astype(int)
+                df['date'] = df.sessions.apply(lambda x: x['date'])
+                df['vaccine'] = df.sessions.apply(lambda x: x['vaccine'])
+                df = df[["date", "min_age_limit", "available_capacity", "pincode", "name", "state_name", "district_name", "block_name", "fee_type", "vaccine"]]
+                all_date_df.append(df)
+                # if all_date_df is not None:
+                #     all_date_df = pd.concat([all_date_df, df])
+                # else:
+                #     all_date_df = df
+        if len(all_date_df)>0:
+            all_date_df = pd.concat(all_date_df)
+            all_date_df = all_date_df.drop(["block_name"], axis=1)
+            if pincode_search is not None and pincode_search!="":
+                dist = pgeocode.GeoDistance('in')
+                all_date_df['distance'] = df.pincode.apply(lambda x: dist.query_postal_code(str(pincode_search), x)).fillna(9999).round(0)
+                all_date_df.sort_values(["distance", "available_capacity"], ascending=[True, False], inplace=True)
+            else:
+                all_date_df.sort_values(["available_capacity"], ascending=[False], inplace=True)
+            all_date_df = all_date_df[all_date_df.min_age_limit <= min_age_limit]
+            if not show_empty_slots:
+                all_date_df = all_date_df[all_date_df.available_capacity > 0]
+            # Human Readable Column names
+            all_date_df.rename(columns={
+                "name": "Center",
+                "district_name": "District",
+                "fee_type": "Free/Paid",
+                "min_age_limit": "Min Eligible Age",
+                "pincode": "Pin Code",
+                "distance": "Distance from you(km)",
+                "available_capacity": "Available Slots"
+            }, inplace=True)
 
-        return all_date_df
-    return pd.DataFrame()
+            return all_date_df
+        return pd.DataFrame()
+    else:
+        return None
 
 
 def send_email(data_frame, age, send_empty_email=False):
@@ -183,8 +185,20 @@ if __name__ == "__main__":
     send_empty_email = False
     pincode = 695024
     show_empty_slots = False
-    availability_data = get_availability(dist_ids, min_age_limit, pincode, show_empty_slots)
+    
+    max_retries = 10
+    retries = 0
+    availability_data = None
+    while availability_data is not None:
+        availability_data = get_availability(dist_ids, min_age_limit, pincode, show_empty_slots)
+        retries+=1
+        if retries == max_retries:
+            break
+        
     # print(availability_data)
-    send_email(availability_data, min_age_limit, send_empty_email = False)
-    if not show_empty_slots and len(availability_data)==0:
-        print("No Slots available")
+    if availability_data is not None:
+        send_email(availability_data, min_age_limit, send_empty_email = False)
+        if not show_empty_slots and len(availability_data)==0:
+            print("No Slots available")
+    else:
+        print("API Request Failed")

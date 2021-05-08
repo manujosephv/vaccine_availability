@@ -8,7 +8,7 @@ from st_download_button import download_button
 @st.cache
 def cached_availability(district_ids, min_age_limit, pincode_search, free_paid, show_empty_slots):
     df= get_availability(district_ids, min_age_limit, pincode_search, show_empty_slots)
-    if len(df)>0:
+    if df is not None and len(df)>0:
         df = df[df['Free/Paid'].isin(free_paid)]
     return df
 
@@ -51,7 +51,9 @@ def main():
     search = st.button("Search")
     if search:
         df = cached_availability(district_ids, min_age_limit, pincode_search, free_paid, show_empty_slots)
-        if len(df)>0:
+        if df is None:
+            st.subheader("API Request Failed. Please Try Again.")
+        elif len(df)>0:
             # df = get_availability(next_n_days, district_ids, min_age_limit)
             idx_cols = ['Center','District', 'Free/Paid','Min Eligible Age', 'Pin Code']
             if "Distance from you(km)" in df.columns:
